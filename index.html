@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ink Bloom</title>
+<style>
+  :root {
+    --bg: #0b0c10;
+    --panel: rgba(20, 22, 28, 0.7);
+    --text: #e8e8ee;
+    --muted: #9a9ba8;
+    --accent: #7c5cff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--bg);
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+  }
+  canvas {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    touch-action: none;
+    cursor: crosshair;
+  }
+  #ui {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .panel {
+    background: var(--panel);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 10px 14px;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  h1 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.3px;
+  }
+  .sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .swatch {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.15);
+    cursor: pointer;
+    transition: transform 0.15s ease, border-color 0.15s ease;
+  }
+  .swatch:hover { transform: scale(1.15); }
+  .swatch.active {
+    border-color: #fff;
+    transform: scale(1.15);
+  }
+  button {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    pointer-events: auto;
+  }
+  button:hover { background: rgba(255,255,255,0.14); }
+  button:active { transform: translateY(1px); }
+  #hint {
+    position: absolute;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    pointer-events: none;
+    opacity: 0.8;
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <div class="panel">
+    <div>
+      <h1>Ink Bloom</h1>
+      <div class="sub">click or drag to bloom</div>
+    </div>
+  </div>
+  <div class="panel" id="palette"></div>
+  <div class="panel">
+    <button id="clearBtn">Clear</button>
+    <button id="saveBtn">Save PNG</button>
+  </div>
+</div>
+
+<div id="hint">tip: hold and drag for continuous blooms</div>
+
+<script>
+(function () {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const paletteEl = document.getElementById('palette');
+  const clearBtn = document.getElementById('clearBtn');
+  const saveBtn = document.getElementById('saveBtn');
+
+  let W, H, DPR;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // background fill (persists as canvas is drawn on, not cleared each frame)
+  function fillBg() {
+    ctx.fillStyle = '#0b0c10';
+    ctx.fillRect(0, 0, W, H);
+  }
+  fillBg();
+
+  const palettes = [
+    ['#7c5cff', '#ff5ca8', '#5cf0ff', '#ffd45c'],
+    ['#ff6b6b', '#ffa36b', '#ffe66b', '#f7f7f7'],
+    ['#00f5d4', '#00bbf9', '#9b5de5', '#f15bb5'],
+    ['#f72585', '#7209b7', '#3a0ca3', '#4cc9f0'],
+    ['#ffffff', '#cfd8ff', '#9aa5ff', '#5c6bff'],
+  ];
+  let currentPaletteIdx = 0;
+  let currentColors = palettes[0];
+
+  function buildPalette() {
+    paletteEl.innerHTML = '';
+    currentColors.forEach((color, i) => {
+      const sw = document.createElement('div');
+      sw.className = 'swatch' + (i === 0 ? ' active' : '');
+      sw.style.background = color;
+      sw.dataset.color = color;
+      sw.addEventListener('click', () => {
+        document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+        sw.classList.add('active');
+        activeColor = color;
+      });
+      paletteEl.appendChild(sw);
+    });
+    const shuffleBtn = document.createElement('button');
+    shuffleBtn.textContent = '🎨';
+    shuffleBtn.title = 'New palette';
+    shuffleBtn.addEventListener('click', () => {
+      currentPaletteIdx = (currentPaletteIdx + 1) % palettes.length;
+      currentColors = palettes[currentPaletteIdx];
+      activeColor = currentColors[0];
+      buildPalette();
+    });
+    paletteEl.appendChild(shuffleBtn);
+  }
+
+  let activeColor = currentColors[0];
+  buildPalette();
+
+  function hexToRgb(hex) {
+    const v = parseInt(hex.slice(1), 16);
+    return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
+  }
+
+  // --- Particle bloom system ---
+  const particles = [];
+
+  function spawnBloom(x, y, color) {
+    const { r, g, b } = hexToRgb(color);
+    const count = 14 + Math.floor(Math.random() * 10);
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 0.4 + Math.random() * 2.6;
+      particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        radius: 2 + Math.random() * 10,
+        maxRadius: 8 + Math.random() * 40,
+        growth: 0.15 + Math.random() * 0.5,
+        life: 1,
+        decay: 0.004 + Math.random() * 0.012,
+        r, g, b,
+        drift: (Math.random() - 0.5) * 0.02,
+      });
+    }
+  }
+
+  function step() {
+    // subtle fade instead of full clear, creates soft ink-trail feel
+    ctx.fillStyle = 'rgba(11,12,16,0.04)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vx *= 0.98;
+      p.vy *= 0.98;
+      p.vy += p.drift;
+      if (p.radius < p.maxRadius) p.radius += p.growth;
+      p.life -= p.decay;
+
+      if (p.life <= 0) {
+        particles.splice(i, 1);
+        continue;
+      }
+
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius);
+      const alpha = Math.max(p.life, 0) * 0.55;
+      grad.addColorStop(0, `rgba(${p.r},${p.g},${p.b},${alpha})`);
+      grad.addColorStop(1, `rgba(${p.r},${p.g},${p.b},0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+
+  // --- Input handling ---
+  let dragging = false;
+  let lastSpawn = 0;
+
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    if (e.touches && e.touches.length) {
+      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    }
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function handleStart(e) {
+    dragging = true;
+    const { x, y } = getPos(e);
+    spawnBloom(x, y, activeColor);
+    lastSpawn = performance.now();
+  }
+  function handleMove(e) {
+    if (!dragging) return;
+    const now = performance.now();
+    if (now - lastSpawn < 40) return;
+    lastSpawn = now;
+    const { x, y } = getPos(e);
+    spawnBloom(x, y, activeColor);
+  }
+  function handleEnd() {
+    dragging = false;
+  }
+
+  canvas.addEventListener('mousedown', handleStart);
+  canvas.addEventListener('mousemove', handleMove);
+  window.addEventListener('mouseup', handleEnd);
+
+  canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleStart(e); }, { passive: false });
+  canvas.addEventListener('touchmove', (e) => { e.preventDefault(); handleMove(e); }, { passive: false });
+  canvas.addEventListener('touchend', (e) => { e.preventDefault(); handleEnd(); }, { passive: false });
+
+  clearBtn.addEventListener('click', () => {
+    particles.length = 0;
+    fillBg();
+  });
+
+  saveBtn.addEventListener('click', () => {
+    const link = document.createElement('a');
+    link.download = `ink-bloom-${Date.now()}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  });
+})();
+</script>
+
+</body>
+</html>
